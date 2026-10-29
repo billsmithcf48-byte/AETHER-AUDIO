@@ -49,6 +49,7 @@
 
     <!-- INPUT OCULTO PARA ARCHIVOS LOCALES -->
     <input type="file" id="real-file-input" multiple accept="audio/*" class="hidden" onchange="handleLocalFilesSelected(event)">
+    <input type="file" id="folder-input" webkitdirectory multiple class="hidden" onchange="handleLocalFilesSelected(event)">
 
     <!-- CONTENEDOR PRINCIPAL -->
     <div class="flex-1 flex overflow-hidden">
@@ -100,8 +101,11 @@
                 <p class="text-[11px] text-slate-400 leading-relaxed">
                     Selecciona tus archivos de audio (.mp3, .wav, .flac) de tu PC o celular para reproducirlos.
                 </p>
-                <button onclick="openDeviceFileSelector()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-600/20 transition active:scale-95">
-                    <i class="fa-solid fa-file-arrow-up"></i> Seleccionar Audio Local
+                <button onclick="linkMusicFolder()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-600/20 transition active:scale-95">
+                    <i class="fa-solid fa-hard-drive"></i> Añadir carpeta o disco
+                </button>
+                <button onclick="openDeviceFileSelector()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center gap-2 transition active:scale-95">
+                    <i class="fa-solid fa-file-arrow-up"></i> Archivos sueltos
                 </button>
             </div>
         </aside>
@@ -161,10 +165,17 @@
                                 </p>
                             </div>
                         </div>
-                        <button onclick="openDeviceFileSelector()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition active:scale-95 shrink-0">
-                            <i class="fa-solid fa-file-arrow-up"></i> Seleccionar Audio Local
-                        </button>
+                        <div class="flex flex-wrap gap-2 shrink-0">
+                            <button onclick="linkMusicFolder()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition active:scale-95">
+                                <i class="fa-solid fa-hard-drive"></i> Añadir carpeta o disco
+                            </button>
+                            <button onclick="openDeviceFileSelector()" class="bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 transition active:scale-95">
+                                <i class="fa-solid fa-file-arrow-up"></i> Archivos sueltos
+                            </button>
+                        </div>
                     </div>
+
+                    <div id="linked-folders" class="space-y-2"></div>
 
                     <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
                         <div class="flex items-center gap-2">
@@ -412,6 +423,15 @@
         function handleLocalFilesSelected(event) {
             const files = event.target.files;
             if (!files || files.length === 0) return;
+
+            let totalBytes = 0;
+            for (let i = 0; i < files.length; i++) {
+                if (files[i].type.startsWith('audio/') || AUDIO_RE.test(files[i].name)) totalBytes += files[i].size;
+            }
+            if (totalBytes > 1.5 * 1024 ** 3 && !confirm('Se copiarán ' + (totalBytes / 1024 ** 3).toFixed(1) + ' GB de música dentro del navegador. ¿Continuar?')) {
+                event.target.value = '';
+                return;
+            }
 
             let addedCount = 0;
             for (let i = 0; i < files.length; i++) {
@@ -737,6 +757,13 @@
 
             if (ytMode) { ytMode = false; try { ytPlayer && ytPlayer.stopVideo(); } catch (e) {} }
             setYtBoxVisible(false);
+            if (track.fileHandle && !track.audioUrl) {
+                track.fileHandle.getFile().then(file => {
+                    track.audioUrl = URL.createObjectURL(file);
+                    if (activePlaylist[index] === track && currentIndex === index) playCurrentPlaylist(index);
+                }).catch(() => showToast('No se pudo abrir el archivo (¿se desconectó la unidad o se movió?)', 'fa-triangle-exclamation'));
+                return;
+            }
             audio.src = track.audioUrl;
             audio.load();
 
@@ -744,8 +771,15 @@
                 updatePlayIcons(true);
                 startMiniVisualizer();
                 refreshVisibleTrackLists();
-            }).catch(() => {
-                showToast('Error al reproducir la pista', 'fa-triangle-exclamation');
+            }).catch(err => {
+                if (err && err.name === 'AbortError') return; // otra pista tomó el lugar
+                const ext = (track.format || '').toUpperCase();
+                const msg = err && err.name === 'NotSupportedError'
+                    ? 'Este navegador no puede reproducir archivos ' + (ext || 'de ese formato')
+                    : err && err.name === 'NotAllowedError'
+                        ? 'El navegador bloqueó la reproducción: pulsa play otra vez'
+                        : 'Error al reproducir la pista';
+                showToast(msg, 'fa-triangle-exclamation');
             });
         }
 
@@ -825,7 +859,7 @@
             if (track.source === 'local') {
                 badge.textContent = track.format || 'LOCAL';
                 badge.className = 'text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
-                info.textContent = `${track.folder} • ${track.size}`;
+                info.textContent = track.size ? `${track.folder} • ${track.size}` : `${track.folder}`;
             } else {
                 badge.textContent = 'YOUTUBE FULL';
                 badge.className = 'text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30';
@@ -1045,8 +1079,12 @@
         function openDB() {
             if (!dbPromise) {
                 dbPromise = new Promise((resolve, reject) => {
-                    const req = indexedDB.open('aetheraudio', 1);
-                    req.onupgradeneeded = () => req.result.createObjectStore('tracks', { keyPath: 'id' });
+                    const req = indexedDB.open('aetheraudio', 2);
+                    req.onupgradeneeded = () => {
+                        const db = req.result;
+                        if (!db.objectStoreNames.contains('tracks')) db.createObjectStore('tracks', { keyPath: 'id' });
+                        if (!db.objectStoreNames.contains('folders')) db.createObjectStore('folders', { keyPath: 'id' });
+                    };
                     req.onsuccess = () => resolve(req.result);
                     req.onerror = () => reject(req.error);
                 });
@@ -1084,9 +1122,19 @@
             });
         }
 
+        let rawFavs = [];
+        function resolveFavs() {
+            rawFavs.forEach(f => {
+                const t = f.local ? localTracks.find(x => x.id === f.id) : f;
+                if (t && !favoriteTracks.some(x => x.id === t.id)) favoriteTracks.push(t);
+            });
+        }
         function saveFavorites() {
             try {
                 const list = favoriteTracks.map(t => t.source === 'local' ? { local: true, id: t.id } : t);
+                // conservar favoritos de carpetas que aún no se han podido leer
+                rawFavs.filter(f => f.local && !localTracks.some(t => t.id === f.id) && !list.some(x => x.id === f.id)).forEach(f => list.push(f));
+                rawFavs = list;
                 localStorage.setItem('aether_favs', JSON.stringify(list));
             } catch (e) {}
         }
@@ -1103,28 +1151,201 @@
             } catch (e) {
                 showToast('No se pudo leer la biblioteca guardada', 'fa-triangle-exclamation');
             }
+            renderLinkedFolders();
+            await loadLinkedFolders();
             try {
-                const saved = JSON.parse(localStorage.getItem('aether_favs') || '[]');
-                favoriteTracks = saved.map(f => f.local ? localTracks.find(t => t.id === f.id) : f).filter(Boolean);
+                rawFavs = JSON.parse(localStorage.getItem('aether_favs') || '[]');
+                favoriteTracks = [];
+                resolveFavs();
             } catch (e) {}
             updateBadges();
             renderLocalTracks();
+            renderLinkedFolders();
         }
 
         async function clearLocalLibrary() {
-            if (!localTracks.length) return;
-            if (!confirm('¿Borrar las ' + localTracks.length + ' canciones guardadas? Esta acción no se puede deshacer.')) return;
+            if (!localTracks.length && !linkedFolders.length) return;
+            if (!confirm('¿Borrar la biblioteca (' + localTracks.length + ' canciones) y desvincular las carpetas? Tus archivos originales no se borran.')) return;
             if (currentIndex >= 0 && activePlaylist[currentIndex] && activePlaylist[currentIndex].source === 'local') {
                 audio.pause(); audio.removeAttribute('src'); audio.load();
                 updatePlayIcons(false); currentIndex = -1; activePlaylist = [];
             }
             localTracks.forEach(t => URL.revokeObjectURL(t.audioUrl));
             localTracks = [];
+            linkedFolders = [];
             favoriteTracks = favoriteTracks.filter(t => t.source !== 'local');
+            rawFavs = rawFavs.filter(f => !f.local);
             saveFavorites();
             try { await dbClear(); } catch (e) {}
+            try { await dbFolderOp('readwrite', st => st.clear()); } catch (e) {}
+            renderLinkedFolders();
             updateBadges(); renderLocalTracks(); refreshVisibleTrackLists();
             showToast('Biblioteca local vaciada', 'fa-trash');
+        }
+
+
+        // ================== CARPETAS VINCULADAS (sin copiar archivos) ==================
+        let linkedFolders = [];
+        const AUDIO_RE = /\.(mp3|wav|flac|m4a|ogg|oga|aac|opus)$/i;
+        const SKIP_DIRS = /^(\$RECYCLE\.BIN|System Volume Information|node_modules)$/i;
+
+        async function dbFolderOp(mode, fn) {
+            const db = await openDB();
+            return new Promise((res, rej) => {
+                const tx = db.transaction('folders', mode);
+                const r = fn(tx.objectStore('folders'));
+                tx.oncomplete = () => res(r && r.result);
+                tx.onerror = () => rej(tx.error);
+            });
+        }
+        function hashStr(str) {
+            let h = 5381;
+            for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+            return (h >>> 0).toString(36);
+        }
+        function setFolderStatus(rec, msg) {
+            const el = document.getElementById('lf-status-' + rec.id);
+            if (el) el.textContent = msg;
+        }
+
+        async function walkDir(dir, path, out, state) {
+            try {
+                for await (const [name, h] of dir.entries()) {
+                    if (h.kind === 'directory') {
+                        if (name.startsWith('.') || SKIP_DIRS.test(name)) continue;
+                        await walkDir(h, path + '/' + name, out, state);
+                    } else if (AUDIO_RE.test(name)) {
+                        out.push({ handle: h, name, path: path + '/' + name, parent: dir.name || 'Disco' });
+                        state.count++;
+                        if (state.count % 100 === 0 && state.onProgress) state.onProgress(state.count);
+                    }
+                }
+            } catch (e) { /* subcarpeta sin permiso o desconectada: se omite */ }
+        }
+
+        async function scanFolder(rec, silent) {
+            rec.scanning = true;
+            renderLinkedFolders();
+            const found = [];
+            await walkDir(rec.handle, rec.name, found, { count: 0, onProgress: n => setFolderStatus(rec, 'Leyendo… ' + n + ' canciones') });
+            rec.scanning = false;
+            rec.needsPermission = false;
+
+            localTracks.forEach(t => { if (t.folderId === rec.id && t.audioUrl) URL.revokeObjectURL(t.audioUrl); });
+            localTracks = localTracks.filter(t => t.folderId !== rec.id);
+            found.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+            found.forEach(f => {
+                const ext = f.name.split('.').pop().toUpperCase();
+                const base = f.name.replace(/\.[^/.]+$/, '');
+                let artist = 'Desconocido', title = base;
+                if (base.includes('-')) {
+                    const parts = base.split('-');
+                    artist = parts[0].trim();
+                    title = parts.slice(1).join('-').trim();
+                }
+                localTracks.push({
+                    id: 'dir-' + rec.id + '-' + hashStr(f.path), folderId: rec.id,
+                    title, artist, folder: f.parent, format: ext, size: '',
+                    audioUrl: null, fileHandle: f.handle, source: 'local',
+                    artwork: 'https://placehold.co/120x120/1e1b4b/a5b4fc?text=' + encodeURIComponent(ext)
+                });
+            });
+            rec.count = found.length;
+
+            favoriteTracks = favoriteTracks.map(f => localTracks.find(t => t.id === f.id) || f);
+            resolveFavs();
+            updateBadges();
+            renderLocalTracks();
+            renderLinkedFolders();
+            if (currentIndex === -1) activePlaylist = [...localTracks];
+            if (!silent) showToast(found.length ? `"${rec.name}": ${found.length} canciones añadidas` : `No se encontró música en "${rec.name}"`, found.length ? 'fa-circle-check' : 'fa-triangle-exclamation');
+        }
+
+        async function linkMusicFolder() {
+            if (!window.showDirectoryPicker) {
+                if (/Android/i.test(navigator.userAgent)) {
+                    showToast('Este navegador no permite elegir carpetas. Selecciona los archivos (puedes marcar varios a la vez).', 'fa-circle-info');
+                    openDeviceFileSelector();
+                } else {
+                    document.getElementById('folder-input').click();
+                }
+                return;
+            }
+            let handle;
+            try {
+                handle = await showDirectoryPicker({ id: 'aether-music', mode: 'read', startIn: 'music' });
+            } catch (e) {
+                if (e.name !== 'AbortError') showToast('No se pudo abrir esa carpeta. El navegador bloquea carpetas del sistema; elige la carpeta donde está tu música.', 'fa-triangle-exclamation');
+                return;
+            }
+            for (const f of linkedFolders) {
+                try { if (await f.handle.isSameEntry(handle)) { showToast('Esa carpeta ya está añadida', 'fa-circle-info'); return; } } catch (e) {}
+            }
+            const rec = { id: 'f' + Date.now().toString(36), name: handle.name || 'Disco', handle };
+            linkedFolders.push(rec);
+            try {
+                await dbFolderOp('readwrite', st => st.put({ id: rec.id, name: rec.name, handle: rec.handle }));
+            } catch (e) {
+                showToast('No se pudo recordar la carpeta para la próxima vez', 'fa-triangle-exclamation');
+            }
+            await scanFolder(rec, false);
+        }
+
+        async function loadLinkedFolders() {
+            try {
+                linkedFolders = (await dbFolderOp('readonly', st => st.getAll())) || [];
+            } catch (e) { linkedFolders = []; return; }
+            for (const rec of linkedFolders) {
+                let perm = 'prompt';
+                try { perm = await rec.handle.queryPermission({ mode: 'read' }); } catch (e) {}
+                if (perm === 'granted') await scanFolder(rec, true);
+                else rec.needsPermission = true;
+            }
+        }
+
+        async function reconnectFolder(id) {
+            const rec = linkedFolders.find(f => f.id === id);
+            if (!rec) return;
+            let perm = 'denied';
+            try { perm = await rec.handle.requestPermission({ mode: 'read' }); } catch (e) {}
+            if (perm === 'granted') await scanFolder(rec, false);
+            else showToast('No se concedió el permiso para leer esa carpeta', 'fa-triangle-exclamation');
+        }
+
+        async function unlinkFolder(id) {
+            const rec = linkedFolders.find(f => f.id === id);
+            if (!rec) return;
+            if (!confirm('¿Quitar "' + rec.name + '" de la biblioteca? Tus archivos no se borran.')) return;
+            const cur = activePlaylist[currentIndex];
+            if (cur && cur.folderId === id) {
+                audio.pause(); audio.removeAttribute('src'); audio.load();
+                updatePlayIcons(false); currentIndex = -1; activePlaylist = [];
+            }
+            localTracks.forEach(t => { if (t.folderId === id && t.audioUrl) URL.revokeObjectURL(t.audioUrl); });
+            localTracks = localTracks.filter(t => t.folderId !== id);
+            favoriteTracks = favoriteTracks.filter(t => t.folderId !== id);
+            rawFavs = rawFavs.filter(f => !(f.local && String(f.id).startsWith('dir-' + id + '-')));
+            linkedFolders = linkedFolders.filter(f => f.id !== id);
+            try { await dbFolderOp('readwrite', st => st.delete(id)); } catch (e) {}
+            saveFavorites();
+            updateBadges(); renderLocalTracks(); renderLinkedFolders(); refreshVisibleTrackLists();
+        }
+
+        function renderLinkedFolders() {
+            const c = document.getElementById('linked-folders');
+            if (!c) return;
+            c.innerHTML = linkedFolders.map(f => `
+                <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-900/70 border border-slate-800 rounded-xl px-3 py-2">
+                    <div class="min-w-0 flex items-center gap-2 text-xs">
+                        <i class="fa-solid fa-hard-drive text-indigo-400"></i>
+                        <span class="font-semibold text-white truncate">${esc(f.name)}</span>
+                        <span id="lf-status-${f.id}" class="text-slate-400">${f.scanning ? 'Leyendo…' : f.needsPermission ? 'Hace falta tu permiso para leerla' : (f.count ?? 0) + ' canciones'}</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="reconnectFolder('${f.id}')" class="bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg transition">${f.needsPermission ? 'Reconectar' : 'Actualizar'}</button>
+                        <button onclick="unlinkFolder('${f.id}')" class="bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg transition">Quitar</button>
+                    </div>
+                </div>`).join('');
         }
 
         // ================== MOTOR YOUTUBE (IFrame Player API oficial) ==================

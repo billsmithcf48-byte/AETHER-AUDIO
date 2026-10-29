@@ -182,12 +182,18 @@
                             <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Archivos locales:</span>
                             <span id="local-tracks-counter" class="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">0 archivos</span>
                         </div>
-                        <div class="flex items-center gap-2">
+                        <div class="flex flex-wrap items-center gap-2">
                             <button onclick="clearLocalLibrary()" class="bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition" title="Borrar todas las canciones guardadas">
                                 <i class="fa-solid fa-trash text-[10px]"></i> Vaciar
                             </button>
                             <button onclick="playAllLocal()" class="bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition">
                                 <i class="fa-solid fa-play text-[10px]"></i> Reproducir Todo
+                            </button>
+                            <button onclick="toggleShuffleMode()" id="btn-shuffle-l" data-base="shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-slate-800 text-xs transition" class="shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-slate-800 text-xs text-slate-400 transition" title="Modo aleatorio">
+                                <i class="fa-solid fa-shuffle"></i>
+                            </button>
+                            <button onclick="toggleRepeatMode()" id="btn-repeat-l" data-base="relative shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-slate-800 text-xs transition" class="relative shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-slate-800 text-xs text-slate-400 transition" title="Repetir">
+                                <i class="fa-solid fa-repeat"></i><span class="repeat-one hidden absolute top-0.5 right-1 text-[8px] font-extrabold leading-none">1</span>
                             </button>
                         </div>
                     </div>
@@ -839,18 +845,18 @@
         function playAllLocal() {
             if (!localTracks.length) return;
             activePlaylist = [...localTracks];
-            playCurrentPlaylist(0);
+            playCurrentPlaylist(isShuffle ? Math.floor(Math.random() * activePlaylist.length) : 0);
         }
 
         let repeatMode = 'all'; // 'off' = se detiene al final · 'all' = repetir ronda · 'one' = repetir canción
 
         function updateModeButtons() {
-            ['btn-shuffle', 'btn-shuffle-m'].forEach(id => {
+            ['btn-shuffle', 'btn-shuffle-m', 'btn-shuffle-l'].forEach(id => {
                 const b = document.getElementById(id);
                 if (b) b.className = b.dataset.base + ' ' + (isShuffle ? 'text-indigo-400' : 'text-slate-400 hover:text-white');
             });
             const titles = { off: 'Repetir: desactivado', all: 'Repetir ronda', one: 'Repetir canción' };
-            ['btn-repeat', 'btn-repeat-m'].forEach(id => {
+            ['btn-repeat', 'btn-repeat-m', 'btn-repeat-l'].forEach(id => {
                 const b = document.getElementById(id);
                 if (!b) return;
                 b.className = b.dataset.base + ' ' + (repeatMode === 'off' ? 'text-slate-400 hover:text-white' : 'text-indigo-400');

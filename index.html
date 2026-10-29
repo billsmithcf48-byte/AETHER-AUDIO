@@ -325,7 +325,7 @@
 
             <div class="w-full md:w-2/5 flex flex-col items-center gap-1.5">
                 <div class="hidden md:flex items-center gap-4">
-                    <button onclick="toggleShuffleMode()" id="btn-shuffle" class="text-slate-400 hover:text-white text-xs p-1.5 transition" title="Modo Aleatorio">
+                    <button onclick="toggleShuffleMode()" id="btn-shuffle" data-base="text-xs p-1.5 transition" class="text-slate-400 hover:text-white text-xs p-1.5 transition" title="Modo Aleatorio">
                         <i class="fa-solid fa-shuffle"></i>
                     </button>
                     <button onclick="playPrevious()" class="text-slate-300 hover:text-white text-sm p-1.5 transition" title="Anterior">
@@ -337,15 +337,21 @@
                     <button onclick="playNext()" class="text-slate-300 hover:text-white text-sm p-1.5 transition" title="Siguiente">
                         <i class="fa-solid fa-forward-step"></i>
                     </button>
-                    <button onclick="toggleRepeatMode()" id="btn-repeat" class="text-slate-400 hover:text-white text-xs p-1.5 transition" title="Repetir">
-                        <i class="fa-solid fa-repeat"></i>
+                    <button onclick="toggleRepeatMode()" id="btn-repeat" data-base="relative text-xs p-1.5 transition" class="relative text-slate-400 hover:text-white text-xs p-1.5 transition" title="Repetir">
+                        <i class="fa-solid fa-repeat"></i><span class="repeat-one hidden absolute top-0 right-0 text-[8px] font-extrabold leading-none">1</span>
                     </button>
                 </div>
 
                 <div class="w-full flex items-center gap-2.5">
+                    <button onclick="toggleShuffleMode()" id="btn-shuffle-m" data-base="md:hidden shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-sm transition" class="md:hidden shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-sm text-slate-400 transition" title="Modo aleatorio">
+                        <i class="fa-solid fa-shuffle"></i>
+                    </button>
                     <span id="time-current" class="text-[10px] font-mono text-slate-400 w-9 text-right">0:00</span>
                     <input id="seek-bar" type="range" min="0" max="100" value="0" step="0.1" class="flex-1">
                     <span id="time-total" class="text-[10px] font-mono text-slate-400 w-9">0:00</span>
+                    <button onclick="toggleRepeatMode()" id="btn-repeat-m" data-base="md:hidden relative shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-sm transition" class="md:hidden relative shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-sm text-slate-400 transition" title="Repetir">
+                        <i class="fa-solid fa-repeat"></i><span class="repeat-one hidden absolute top-0 right-0 text-[8px] font-extrabold leading-none">1</span>
+                    </button>
                 </div>
             </div>
 
@@ -745,6 +751,7 @@
 
             currentIndex = index;
             updatePlayerBarUI(track);
+            updateMediaSession(track);
 
             if (track.ytId) {
                 audio.pause();
@@ -835,17 +842,46 @@
             playCurrentPlaylist(0);
         }
 
+        let repeatMode = 'all'; // 'off' = se detiene al final · 'all' = repetir ronda · 'one' = repetir canción
+
+        function updateModeButtons() {
+            ['btn-shuffle', 'btn-shuffle-m'].forEach(id => {
+                const b = document.getElementById(id);
+                if (b) b.className = b.dataset.base + ' ' + (isShuffle ? 'text-indigo-400' : 'text-slate-400 hover:text-white');
+            });
+            const titles = { off: 'Repetir: desactivado', all: 'Repetir ronda', one: 'Repetir canción' };
+            ['btn-repeat', 'btn-repeat-m'].forEach(id => {
+                const b = document.getElementById(id);
+                if (!b) return;
+                b.className = b.dataset.base + ' ' + (repeatMode === 'off' ? 'text-slate-400 hover:text-white' : 'text-indigo-400');
+                b.title = titles[repeatMode];
+                const one = b.querySelector('.repeat-one');
+                if (one) one.classList.toggle('hidden', repeatMode !== 'one');
+            });
+        }
+
         function toggleShuffleMode() {
             isShuffle = !isShuffle;
-            document.getElementById('btn-shuffle').className = isShuffle ? 'text-indigo-400 text-xs p-1.5 transition' : 'text-slate-400 hover:text-white text-xs p-1.5 transition';
+            updateModeButtons();
             showToast(isShuffle ? 'Modo aleatorio activado' : 'Modo aleatorio desactivado', 'fa-shuffle');
         }
 
         function toggleRepeatMode() {
-            isRepeat = !isRepeat;
-            audio.loop = isRepeat; // en YouTube el repeat se maneja al terminar el video
-            document.getElementById('btn-repeat').className = isRepeat ? 'text-indigo-400 text-xs p-1.5 transition' : 'text-slate-400 hover:text-white text-xs p-1.5 transition';
-            showToast(isRepeat ? 'Repetición activada' : 'Repetición desactivada', 'fa-repeat');
+            repeatMode = repeatMode === 'all' ? 'one' : repeatMode === 'one' ? 'off' : 'all';
+            isRepeat = repeatMode === 'one';
+            audio.loop = isRepeat; // en YouTube se maneja al terminar el video
+            updateModeButtons();
+            showToast(repeatMode === 'one' ? 'Repetir canción' : repeatMode === 'all' ? 'Repetir ronda (toda la lista)' : 'Repetición desactivada: se detiene al final', 'fa-repeat');
+        }
+
+        // Qué hacer cuando termina una pista por sí sola
+        function autoAdvance() {
+            if (repeatMode === 'off' && !isShuffle && currentIndex >= activePlaylist.length - 1) {
+                updatePlayIcons(false);
+                refreshVisibleTrackLists();
+                return;
+            }
+            playNext();
         }
 
         function updatePlayerBarUI(track) {
@@ -875,7 +911,39 @@
             document.getElementById('mobile-play-icon').className = playing ? 'fa-solid fa-pause text-sm' : 'fa-solid fa-play text-sm ml-0.5';
             document.getElementById('player-eq-overlay').classList.toggle('hidden', !playing);
             document.getElementById('player-eq-overlay').classList.toggle('flex', playing);
+            if ('mediaSession' in navigator) {
+                try { navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'; } catch (e) {}
+            }
         }
+
+        // ================== CONTROLES DEL SISTEMA (pantalla bloqueada / notificación) ==================
+        function updateMediaSession(track) {
+            if (!('mediaSession' in navigator) || !window.MediaMetadata) return;
+            try {
+                const meta = { title: track.title, artist: track.artist, album: track.folder || 'AetherAudio' };
+                if (track.artwork && !track.artwork.includes('placehold')) meta.artwork = [{ src: track.artwork, sizes: '320x180' }];
+                navigator.mediaSession.metadata = new MediaMetadata(meta);
+            } catch (e) {}
+        }
+        (function setupMediaSession() {
+            if (!('mediaSession' in navigator)) return;
+            const set = (name, fn) => { try { navigator.mediaSession.setActionHandler(name, fn); } catch (e) {} };
+            set('play', () => { if (isPaused()) togglePlayPause(); });
+            set('pause', () => { if (!isPaused()) togglePlayPause(); });
+            set('previoustrack', () => playPrevious());
+            set('nexttrack', () => playNext());
+            set('seekto', d => { if (d && d.seekTime != null) seekToSeconds(d.seekTime); });
+        })();
+
+        let lastPosUpdate = 0;
+        audio.addEventListener('timeupdate', () => {
+            const now = Date.now();
+            if (now - lastPosUpdate < 1000 || !('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+            lastPosUpdate = now;
+            if (audio.duration && isFinite(audio.duration)) {
+                try { navigator.mediaSession.setPositionState({ duration: audio.duration, position: audio.currentTime, playbackRate: audio.playbackRate }); } catch (e) {}
+            }
+        });
 
         audio.addEventListener('timeupdate', () => {
             if (audio.duration && !isNaN(audio.duration)) {
@@ -891,7 +959,7 @@
             }
         });
 
-        audio.addEventListener('ended', () => { if (!isRepeat) playNext(); });
+        audio.addEventListener('ended', () => { if (!isRepeat) autoAdvance(); });
 
         document.getElementById('seek-bar').addEventListener('input', (e) => {
             const d = curDuration();
@@ -1384,7 +1452,7 @@
                 updatePlayIcons(false); refreshVisibleTrackLists();
             } else if (e.data === S.ENDED) {
                 updatePlayIcons(false);
-                if (isRepeat) { ytPlayer.seekTo(0, true); ytPlayer.playVideo(); } else { playNext(); }
+                if (isRepeat) { ytPlayer.seekTo(0, true); ytPlayer.playVideo(); } else { autoAdvance(); }
             }
         }
 
@@ -1467,7 +1535,7 @@
             setYtBoxVisible(document.getElementById('yt-box').dataset.active === '1');
         }
 
-        window.addEventListener('DOMContentLoaded', () => { updateBadges(); renderLocalTracks(); refreshKeyStatus(); loadYouTubeApi(); initLibrary(); });
+        window.addEventListener('DOMContentLoaded', () => { updateBadges(); renderLocalTracks(); refreshKeyStatus(); loadYouTubeApi(); updateModeButtons(); initLibrary(); });
     </script>
 </body>
 </html>
